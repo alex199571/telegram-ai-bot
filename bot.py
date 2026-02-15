@@ -3,7 +3,7 @@ from openai import OpenAI
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 
-# ====== Railway Environment Variables ======
+# ====== ENV ======
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
@@ -15,12 +15,26 @@ if not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ====== Memory ======
-user_memory = {}
+# ====== LIMITS ======
+MAX_INPUT_CHARS = 1000
+MAX_OUTPUT_CHARS = 800
 MAX_HISTORY = 8
 
+# ====== MEMORY ======
+user_memory = {}
+
+SYSTEM_PROMPT = (
+    "Ти корисний та короткий асистент. "
+    f"Відповідай максимум {MAX_OUTPUT_CHARS} символів. "
+    "Не перевищуй це обмеження."
+)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Бот онлайн. Напиши щось.")
+    await update.message.reply_text(
+        f"🤖 Бот онлайн.\n"
+        f"Ліміт повідомлення: {MAX_INPUT_CHARS} символів.\n"
+        f"Максимальна довжина відповіді: {MAX_OUTPUT_CHARS} символів."
+    )
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -31,9 +45,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_text = update.message.text
 
+    # ====== INPUT LIMIT ======
+    if len(user_text) > MAX_INPUT_CHARS:
+        await update.message.reply_text(
+            f"⚠️ Повідомлення занадто довге.\n"
+            f"Максимум {MAX_INPUT_CHARS} символів."
+        )
+        return
+
     if user_id not in user_memory:
         user_memory[user_id] = [
-            {"role": "system", "content": "Ти короткий і корисний асистент."}
+            {"role": "system", "content": SYSTEM_PROMPT}
         ]
 
     user_memory[user_id].append({"role": "user", "content": user_text})
@@ -45,10 +67,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=user_memory[user_id],
-            max_tokens=250
+            max_tokens=300
         )
 
         reply = response.choices[0].message.content
+
+        # ====== OUTPUT LIMIT ======
+        if len(reply) > MAX_OUTPUT_CHARS:
+            reply = reply[:MAX_OUTPUT_CHARS] + "..."
+
         user_memory[user_id].append({"role": "assistant", "content": reply})
 
         await update.message.reply_text(reply)
